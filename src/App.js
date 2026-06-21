@@ -133,7 +133,7 @@ export default function App() {
   }
 
   async function removeAgent(id) {
-    if (!confirm("Supprimer cet agent ? Son historique de pointage sera aussi supprimé.")) return;
+    if (!window.confirm("Supprimer cet agent ? Son historique de pointage sera aussi supprimé.")) return;
     await supabase.from("agents").delete().eq("id", id);
     setAgents(agents.filter(a => a.id !== id));
   }
