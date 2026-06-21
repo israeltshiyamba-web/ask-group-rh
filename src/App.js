@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
 // ============================================================
@@ -208,11 +208,6 @@ export default function App() {
     const montantJour = Math.max(0, fixeJournalier - deductionRetard);
 
     return { fixeJournalier, deductionRetard, montantJour, retardMinutes, estAbsent: false, justifie: true };
-  }
-
-  function absencesNonJustifieesDuMois(agentId, date) {
-    const mk = monthKey(date);
-    return pointages.filter(p => p.agentId === agentId && monthKey(p.date) === mk && p.statut === "absent" && !p.justifie).length;
   }
 
   function recapMensuel(agentId, date) {
