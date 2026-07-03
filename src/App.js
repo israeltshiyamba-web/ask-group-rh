@@ -46,6 +46,109 @@ const HEURES_JOUR = 8;
 // Taux charges sociales RDC (affichées séparément, pas déduites du salaire)
 const TAUX_RDC = { cnssSal: 0.05, ipr: 0.15, cnssPat: 0.13, inpp: 0.03, onem: 0.02 };
 
+// ============================================================
+// CALENDRIERS DES JOURS FÉRIÉS CHÔMÉS ET PAYÉS
+// Format: "MM-DD" pour les dates fixes
+// ============================================================
+
+// 🇫🇷 Jours fériés FRANCE — applicables aux agents RDC ET Tunisie
+const FERIES_FRANCE_FIXES = [
+  { date: "01-01", nom: "Nouvel An 🇫🇷" },
+  { date: "05-01", nom: "Fête du Travail 🇫🇷" },
+  { date: "05-08", nom: "Victoire 1945 🇫🇷" },
+  { date: "07-14", nom: "Fête Nationale 🇫🇷" },
+  { date: "08-15", nom: "Assomption 🇫🇷" },
+  { date: "11-01", nom: "Toussaint 🇫🇷" },
+  { date: "11-11", nom: "Armistice 🇫🇷" },
+  { date: "12-25", nom: "Noël 🇫🇷" },
+];
+
+// Jours fériés France à date variable selon l'année (Pâques + dérivés)
+// Algorithme de Meeus/Jones/Butcher pour calculer Pâques
+function calculerPaquesEtFeries(year) {
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31);
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  const paques = new Date(year, month - 1, day);
+  const fmt = (d) => {
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${mm}-${dd}`;
+  };
+  const addDays = (d, n) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+  return [
+    { date: fmt(addDays(paques, 1)), nom: "Lundi de Pâques 🇫🇷" },
+    { date: fmt(addDays(paques, 39)), nom: "Ascension 🇫🇷" },
+    { date: fmt(addDays(paques, 50)), nom: "Lundi de Pentecôte 🇫🇷" },
+  ];
+}
+
+// 🇨🇩 Jours fériés RDC — uniquement pour agents RDC
+const FERIES_RDC_FIXES = [
+  { date: "01-01", nom: "Nouvel An 🇨🇩" },
+  { date: "01-04", nom: "Martyrs de l'Indépendance 🇨🇩" },
+  { date: "01-16", nom: "Héros National L.D. Kabila 🇨🇩" },
+  { date: "01-17", nom: "Héros National P.E. Lumumba 🇨🇩" },
+  { date: "04-06", nom: "Simon Kimbangu & Conscience Africaine 🇨🇩" },
+  { date: "05-01", nom: "Fête du Travail 🇨🇩" },
+  { date: "05-17", nom: "Journée des Forces Armées 🇨🇩" },
+  { date: "06-30", nom: "Fête de l'Indépendance 🇨🇩" },
+  { date: "08-01", nom: "Fête des Parents 🇨🇩" },
+  { date: "12-25", nom: "Noël 🇨🇩" },
+];
+
+// 🇹🇳 Jours fériés Tunisie — uniquement pour agents Tunisie
+const FERIES_TN_FIXES = [
+  { date: "01-01", nom: "Nouvel An 🇹🇳" },
+  { date: "01-14", nom: "Révolution et Jeunesse 🇹🇳" },
+  { date: "03-20", nom: "Fête de l'Indépendance 🇹🇳" },
+  { date: "04-09", nom: "Journée des Martyrs 🇹🇳" },
+  { date: "05-01", nom: "Fête du Travail 🇹🇳" },
+  { date: "07-25", nom: "Fête de la République 🇹🇳" },
+  { date: "08-13", nom: "Journée de la Femme 🇹🇳" },
+  { date: "10-15", nom: "Journée de l'Évacuation 🇹🇳" },
+];
+
+// Vérifier si une date est un jour férié pour un agent donné
+// localisation: "RDC" ou "TN"
+// extraFeries: dates variables ajoutées manuellement (Aïd, etc.) format "YYYY-MM-DD"
+function getFerieInfo(dateISO, localisation, extraFeries = []) {
+  const year = parseInt(dateISO.slice(0, 4));
+  const mmdd = dateISO.slice(5); // "MM-DD"
+
+  // Fêtes France (applicables aux deux)
+  const feriesFrance = [...FERIES_FRANCE_FIXES, ...calculerPaquesEtFeries(year)];
+  const matchFrance = feriesFrance.find(f => f.date === mmdd);
+  if (matchFrance) return { isFerie: true, nom: matchFrance.nom, type: "france" };
+
+  // Fêtes spécifiques selon localisation
+  if (localisation === "RDC") {
+    const match = FERIES_RDC_FIXES.find(f => f.date === mmdd);
+    if (match) return { isFerie: true, nom: match.nom, type: "rdc" };
+  }
+  if (localisation === "TN") {
+    const match = FERIES_TN_FIXES.find(f => f.date === mmdd);
+    if (match) return { isFerie: true, nom: match.nom, type: "tn" };
+  }
+
+  // Fêtes variables manuelles (Aïd, Mouled, etc.)
+  const matchExtra = extraFeries.find(f => f.date === dateISO);
+  if (matchExtra) return { isFerie: true, nom: matchExtra.nom, type: "variable" };
+
+  return { isFerie: false };
+}
+
 export default function App() {
   const [unlocked, setUnlocked] = useState(false);
   const [storedPassword, setStoredPassword] = useState(null);
@@ -63,6 +166,9 @@ export default function App() {
   const [loaded, setLoaded] = useState(false);
   const [saveStatus, setSaveStatus] = useState("");
   const [dtToUsd, setDtToUsd] = useState(DT_TO_USD_DEFAULT);
+  // Fêtes variables manuelles (Aïd, Mouled, fériés exceptionnels)
+  // Format: [{date: "YYYY-MM-DD", nom: "Aïd el-Fitr 🌙", pays: "TN"}]
+  const [extraFeries, setExtraFeries] = useState([]);
 
   // Vérification mot de passe
   useEffect(() => {
@@ -156,15 +262,23 @@ export default function App() {
     await supabase.from("month_params").upsert({ id: merged.id, agent_id: merged.agentId, mois: merged.mois, salaire_fixe: merged.salaireFixe, prime_assiduite: merged.primeAssiduite, prime_performance: merged.primePerformance });
   }
 
-  // Calcul salaire journalier
+  // Calcul salaire journalier (avec gestion des jours fériés chômés payés)
   function calculDuJour(agentId, date) {
+    const agent = agents.find(a => a.id === agentId);
+    const localisation = agent ? (agent.localisation || "RDC") : "RDC";
+    const ferieInfo = getFerieInfo(date, localisation, extraFeries);
     const p = getPointage(agentId, date);
     const mp = getMonthParam(agentId, date);
     const [year, month] = date.split("-").map(Number);
     const jOuvrables = joursOuvrables(year, month);
     const fixeJournalier = mp.salaireFixe / jOuvrables;
 
-    if (!p || p.statut === "absent") return { fixeJournalier: 0, deductionRetard: 0, montantJour: 0, retardMinutes: 0, estAbsent: true, justifie: p ? p.justifie : false };
+    // Jour férié chômé payé : l'agent est payé normalement sans travailler
+    if (ferieInfo.isFerie) {
+      return { fixeJournalier, deductionRetard: 0, montantJour: fixeJournalier, retardMinutes: 0, estAbsent: false, estFerie: true, ferieNom: ferieInfo.nom };
+    }
+
+    if (!p || p.statut === "absent") return { fixeJournalier: 0, deductionRetard: 0, montantJour: 0, retardMinutes: 0, estAbsent: true, justifie: p ? p.justifie : false, estFerie: false };
 
     const arriveeMin = timeToMinutes(p.heureArrivee);
     const debutMin = timeToMinutes(HEURE_DEBUT);
@@ -174,7 +288,7 @@ export default function App() {
     const tauxMin = fixeJournalier / (HEURES_JOUR * 60);
     const deductionRetard = retardMinutes * tauxMin;
     const montantJour = Math.max(0, fixeJournalier - deductionRetard);
-    return { fixeJournalier, deductionRetard, montantJour, retardMinutes, estAbsent: false };
+    return { fixeJournalier, deductionRetard, montantJour, retardMinutes, estAbsent: false, estFerie: false };
   }
 
   // Récapitulatif mensuel — agents RDC (USD)
@@ -254,10 +368,10 @@ export default function App() {
 
       {/* MAIN */}
       <div style={{ flex: 1, padding: "28px 36px", overflowX: "auto" }}>
-        {page === "pointage" && <PointagePage agents={agents} agentsRDC={agentsRDC} agentsTN={agentsTN} selectedDate={selectedDate} setSelectedDate={setSelectedDate} getPointage={getPointage} upsertPointage={upsertPointage} calculDuJour={calculDuJour} presentsToday={presentsToday} absentsToday={absentsToday} total={agents.length} dtToUsd={dtToUsd} />}
+        {page === "pointage" && <PointagePage agents={agents} agentsRDC={agentsRDC} agentsTN={agentsTN} selectedDate={selectedDate} setSelectedDate={setSelectedDate} getPointage={getPointage} upsertPointage={upsertPointage} calculDuJour={calculDuJour} presentsToday={presentsToday} absentsToday={absentsToday} total={agents.length} dtToUsd={dtToUsd} extraFeries={extraFeries} />}
         {page === "agents" && <AgentsPage agents={agents} agentsRDC={agentsRDC} agentsTN={agentsTN} addAgent={addAgent} removeAgent={removeAgent} />}
-        {page === "params" && <ParamsPage agents={agents} agentsRDC={agentsRDC} agentsTN={agentsTN} selectedDate={selectedDate} setSelectedDate={setSelectedDate} getMonthParam={getMonthParam} setMonthParam={setMonthParam} dtToUsd={dtToUsd} setDtToUsd={setDtToUsd} onChangePassword={handleChangePassword} />}
-        {page === "recap" && <RecapPage agents={agents} agentsRDC={agentsRDC} agentsTN={agentsTN} selectedDate={selectedDate} setSelectedDate={setSelectedDate} recapMensuelRDC={recapMensuelRDC} recapMensuelTN={recapMensuelTN} dtToUsd={dtToUsd} />}
+        {page === "params" && <ParamsPage agents={agents} agentsRDC={agentsRDC} agentsTN={agentsTN} selectedDate={selectedDate} setSelectedDate={setSelectedDate} getMonthParam={getMonthParam} setMonthParam={setMonthParam} dtToUsd={dtToUsd} setDtToUsd={setDtToUsd} onChangePassword={handleChangePassword} extraFeries={extraFeries} setExtraFeries={setExtraFeries} />}
+        {page === "recap" && <RecapPage agents={agents} agentsRDC={agentsRDC} agentsTN={agentsTN} selectedDate={selectedDate} setSelectedDate={setSelectedDate} recapMensuelRDC={recapMensuelRDC} recapMensuelTN={recapMensuelTN} dtToUsd={dtToUsd} extraFeries={extraFeries} />}
       </div>
     </div>
   );
@@ -266,16 +380,35 @@ export default function App() {
 // ============================================================
 // POINTAGE DU JOUR
 // ============================================================
-function PointagePage({ agents, agentsRDC, agentsTN, selectedDate, setSelectedDate, getPointage, upsertPointage, calculDuJour, presentsToday, absentsToday, total, dtToUsd }) {
+function PointagePage({ agents, agentsRDC, agentsTN, selectedDate, setSelectedDate, getPointage, upsertPointage, calculDuJour, presentsToday, absentsToday, total, dtToUsd, extraFeries }) {
+  // Détecter si le jour sélectionné est férié pour chaque groupe
+  const ferieRDC = agentsRDC.length > 0 ? getFerieInfo(selectedDate, "RDC", extraFeries) : { isFerie: false };
+  const ferieTN = agentsTN.length > 0 ? getFerieInfo(selectedDate, "TN", extraFeries) : { isFerie: false };
+
   return (
     <>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 22, flexWrap: "wrap", gap: 12 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, flexWrap: "wrap", gap: 12 }}>
         <div>
           <h1 style={{ fontSize: 22, margin: 0, fontWeight: 700, color: "#0A1B3D" }}>Pointage du jour</h1>
           <div style={{ fontSize: 12.5, color: "#6B6B63", marginTop: 3 }}>Saisie des heures d'arrivée, départ et statut</div>
         </div>
         <input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)} style={{ background: "white", border: "1px solid #E4E1D8", padding: "8px 14px", borderRadius: 8, fontSize: 12.5, fontWeight: 600, color: "#0A1B3D" }} />
       </div>
+
+      {/* Bannière jour férié */}
+      {(ferieRDC.isFerie || ferieTN.isFerie) && (
+        <div style={{ background: "#FFF8DC", border: "2px solid #D4AF37", borderRadius: 10, padding: "12px 18px", marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 22 }}>🎌</span>
+          <div>
+            <div style={{ fontWeight: 700, color: "#0A1B3D", fontSize: 14 }}>
+              Jour férié chômé et payé
+              {ferieRDC.isFerie && <span style={{ marginLeft: 8, background: "#E6F4EC", color: "#1E7A4C", padding: "2px 8px", borderRadius: 5, fontSize: 12 }}>{ferieRDC.nom}</span>}
+              {ferieTN.isFerie && ferieTN.nom !== ferieRDC.nom && <span style={{ marginLeft: 8, background: "#FFF3CD", color: "#8a6500", padding: "2px 8px", borderRadius: 5, fontSize: 12 }}>{ferieTN.nom}</span>}
+            </div>
+            <div style={{ fontSize: 12, color: "#6B6B63", marginTop: 2 }}>Les agents sont payés normalement. Aucune saisie requise aujourd'hui.</div>
+          </div>
+        </div>
+      )}
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 14, marginBottom: 22 }}>
         <Kpi label="Total agents" value={total} />
