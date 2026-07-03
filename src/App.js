@@ -40,16 +40,6 @@ function timeToMinutes(t) {
   return h * 60 + m;
 }
 
-function fmtUSD(n) {
-  if (!n && n !== 0) return "—";
-  return n.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " USD";
-}
-
-function fmtDT(n) {
-  if (!n && n !== 0) return "—";
-  return n.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " DT";
-}
-
 const HEURE_DEBUT = "09:00";
 const HEURES_JOUR = 8;
 
