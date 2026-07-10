@@ -41,6 +41,7 @@ function timeToMinutes(t) {
 }
 
 const HEURE_DEBUT = "09:00";
+const HEURE_FIN = "17:00";
 const HEURES_JOUR = 8;
 
 // Taux charges sociales RDC (affichées séparément, pas déduites du salaire)
@@ -142,8 +143,9 @@ function getFerieInfo(dateISO, localisation, extraFeries = []) {
     if (match) return { isFerie: true, nom: match.nom, type: "tn" };
   }
 
-  // Fêtes variables manuelles (Aïd, Mouled, etc.)
-  const matchExtra = extraFeries.find(f => f.date === dateISO);
+  // Fêtes variables manuelles (Aïd, Mouled, fériés exceptionnels)
+  // Filtrées par pays : "TN", "RDC", ou "ALL" pour les deux
+  const matchExtra = extraFeries.find(f => f.date === dateISO && (f.pays === "ALL" || f.pays === localisation));
   if (matchExtra) return { isFerie: true, nom: matchExtra.nom, type: "variable" };
 
   return { isFerie: false };
@@ -278,17 +280,40 @@ export default function App() {
       return { fixeJournalier, deductionRetard: 0, montantJour: fixeJournalier, retardMinutes: 0, estAbsent: false, estFerie: true, ferieNom: ferieInfo.nom };
     }
 
-    if (!p || p.statut === "absent") return { fixeJournalier: 0, deductionRetard: 0, montantJour: 0, retardMinutes: 0, estAbsent: true, justifie: p ? p.justifie : false, estFerie: false };
+    // Absent = journée entière déduite, avec ou sans justification
+    if (!p || p.statut === "absent") return { fixeJournalier: 0, deductionRetard: fixeJournalier, montantJour: 0, minutesTravaillees: 0, minutesManquantes: HEURES_JOUR * 60, estAbsent: true, justifie: p ? p.justifie : false, estFerie: false };
 
     const arriveeMin = timeToMinutes(p.heureArrivee);
-    const debutMin = timeToMinutes(HEURE_DEBUT);
-    let retardMinutes = 0;
-    if (arriveeMin && arriveeMin > debutMin) retardMinutes = arriveeMin - debutMin;
+    const departMin = timeToMinutes(p.heureDepart);
 
+    // Si aucune heure saisie, on ne déduit rien (données manquantes)
+    if (!arriveeMin && !departMin) {
+      return { fixeJournalier, deductionRetard: 0, montantJour: fixeJournalier, minutesTravaillees: null, minutesManquantes: 0, estAbsent: false, estFerie: false, saisieIncomplete: true };
+    }
+
+    // Calcul des minutes réellement travaillées = départ - arrivée
+    let minutesTravaillees = 0;
+    if (arriveeMin && departMin) {
+      minutesTravaillees = Math.max(0, departMin - arriveeMin);
+    } else if (arriveeMin && !departMin) {
+      // Arrivée saisie mais pas de départ : on calcule uniquement le retard à l'arrivée
+      const debutMin = timeToMinutes(HEURE_DEBUT);
+      const retard = Math.max(0, arriveeMin - debutMin);
+      minutesTravaillees = (HEURES_JOUR * 60) - retard;
+    } else if (!arriveeMin && departMin) {
+      // Départ saisi mais pas d'arrivée : on calcule uniquement le départ anticipé
+      const finMin = timeToMinutes(HEURE_FIN);
+      const departAnticipe = Math.max(0, finMin - departMin);
+      minutesTravaillees = (HEURES_JOUR * 60) - departAnticipe;
+    }
+
+    // Minutes manquantes par rapport aux 8h de référence
+    const minutesManquantes = Math.max(0, (HEURES_JOUR * 60) - minutesTravaillees);
     const tauxMin = fixeJournalier / (HEURES_JOUR * 60);
-    const deductionRetard = retardMinutes * tauxMin;
+    const deductionRetard = minutesManquantes * tauxMin;
     const montantJour = Math.max(0, fixeJournalier - deductionRetard);
-    return { fixeJournalier, deductionRetard, montantJour, retardMinutes, estAbsent: false, estFerie: false };
+
+    return { fixeJournalier, deductionRetard, montantJour, minutesTravaillees, minutesManquantes, estAbsent: false, estFerie: false };
   }
 
   // Récapitulatif mensuel — agents RDC (USD)
@@ -304,7 +329,8 @@ export default function App() {
       else joursP++;
     });
     const mp = getMonthParam(agentId, date);
-    const primeAss = mp.primeAssiduite || 0;
+    // Si 2 absences non justifiées ou plus → prime assiduité = 0 automatiquement
+    const primeAss = absNJ >= 2 ? 0 : (mp.primeAssiduite || 0);
     const primePerf = mp.primePerformance || 0;
     const netAgent = totalFixe + primeAss + primePerf;
     // Charges sociales RDC (sur le salaire brut = salaire fixe mensuel)
@@ -395,17 +421,28 @@ function PointagePage({ agents, agentsRDC, agentsTN, selectedDate, setSelectedDa
         <input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)} style={{ background: "white", border: "1px solid #E4E1D8", padding: "8px 14px", borderRadius: 8, fontSize: 12.5, fontWeight: 600, color: "#0A1B3D" }} />
       </div>
 
-      {/* Bannière jour férié */}
-      {(ferieRDC.isFerie || ferieTN.isFerie) && (
-        <div style={{ background: "#FFF8DC", border: "2px solid #D4AF37", borderRadius: 10, padding: "12px 18px", marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: 22 }}>🎌</span>
+      {/* Bannières jours fériés — séparées par équipe */}
+      {ferieRDC.isFerie && (
+        <div style={{ background: "#E6F4EC", border: "2px solid #1E7A4C", borderRadius: 10, padding: "10px 16px", marginBottom: 10, display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 20 }}>🎌</span>
           <div>
-            <div style={{ fontWeight: 700, color: "#0A1B3D", fontSize: 14 }}>
-              Jour férié chômé et payé
-              {ferieRDC.isFerie && <span style={{ marginLeft: 8, background: "#E6F4EC", color: "#1E7A4C", padding: "2px 8px", borderRadius: 5, fontSize: 12 }}>{ferieRDC.nom}</span>}
-              {ferieTN.isFerie && ferieTN.nom !== ferieRDC.nom && <span style={{ marginLeft: 8, background: "#FFF3CD", color: "#8a6500", padding: "2px 8px", borderRadius: 5, fontSize: 12 }}>{ferieTN.nom}</span>}
+            <div style={{ fontWeight: 700, color: "#0A1B3D", fontSize: 13 }}>
+              🇨🇩 Férié chômé payé — Agents RDC :
+              <span style={{ marginLeft: 8, background: "white", color: "#1E7A4C", padding: "2px 10px", borderRadius: 5, fontSize: 12 }}>{ferieRDC.nom}</span>
             </div>
-            <div style={{ fontSize: 12, color: "#6B6B63", marginTop: 2 }}>Les agents sont payés normalement. Aucune saisie requise aujourd'hui.</div>
+            <div style={{ fontSize: 11, color: "#444", marginTop: 2 }}>Agents RDC payés normalement — pas de saisie requise pour cette équipe.</div>
+          </div>
+        </div>
+      )}
+      {ferieTN.isFerie && (
+        <div style={{ background: "#FFF3CD", border: "2px solid #8a6500", borderRadius: 10, padding: "10px 16px", marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 20 }}>🎌</span>
+          <div>
+            <div style={{ fontWeight: 700, color: "#0A1B3D", fontSize: 13 }}>
+              🇹🇳 Férié chômé payé — Agents Tunisie :
+              <span style={{ marginLeft: 8, background: "white", color: "#8a6500", padding: "2px 10px", borderRadius: 5, fontSize: 12 }}>{ferieTN.nom}</span>
+            </div>
+            <div style={{ fontSize: 11, color: "#444", marginTop: 2 }}>Agents Tunisie payés normalement — pas de saisie requise pour cette équipe.</div>
           </div>
         </div>
       )}
@@ -444,7 +481,7 @@ function TableauPointage({ agents, selectedDate, getPointage, upsertPointage, ca
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
         <thead>
           <tr>
-            {["Agent","Poste","Statut","Arrivée","Départ","Absent justifié ?","Retard","Montant jour","Note"].map(h => (
+            {["Agent","Poste","Statut","Arrivée","Départ","Absent justifié ?","Temps travaillé","Montant jour","Note"].map(h => (
               <th key={h} style={{ textAlign: "left", padding: "8px 10px", background: "#FAFAF7", color: "#6B6B63", fontWeight: 600, fontSize: 10, textTransform: "uppercase", borderBottom: "1px solid #E4E1D8", whiteSpace: "nowrap" }}>{h}</th>
             ))}
           </tr>
@@ -471,10 +508,17 @@ function TableauPointage({ agents, selectedDate, getPointage, upsertPointage, ca
                     : <span style={{ color: "#999" }}>—</span>}
                 </td>
                 <td style={tdStyle}>
-                  {c.estAbsent ? <span style={{ color: "#999" }}>—</span>
-                    : c.retardMinutes > 0
-                      ? <span style={{ background: "#FFF3CD", color: "#8a6500", padding: "2px 8px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>{c.retardMinutes} min</span>
-                      : <span style={{ background: "#E6F4EC", color: "#1E7A4C", padding: "2px 8px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>À l'heure</span>}
+                  {c.estFerie ? <span style={{ background: "#E6F4EC", color: "#1E7A4C", padding: "2px 8px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>🎌 Férié payé</span>
+                  : c.estAbsent ? <span style={{ background: "#FBE9E7", color: "#B4322B", padding: "2px 8px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>Absent</span>
+                  : c.saisieIncomplete ? <span style={{ color: "#999", fontSize: 11 }}>Heures non saisies</span>
+                  : c.minutesTravaillees === null ? <span style={{ color: "#999" }}>—</span>
+                  : c.minutesManquantes > 0
+                    ? <span style={{ background: "#FFF3CD", color: "#8a6500", padding: "2px 8px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>
+                        {Math.floor(c.minutesTravaillees/60)}h{String(c.minutesTravaillees%60).padStart(2,"0")} travaillées (-{c.minutesManquantes} min)
+                      </span>
+                    : <span style={{ background: "#E6F4EC", color: "#1E7A4C", padding: "2px 8px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>
+                        {Math.floor(c.minutesTravaillees/60)}h{String(c.minutesTravaillees%60).padStart(2,"0")} ✓
+                      </span>}
                 </td>
                 <td style={tdStyle}>
                   <b style={{ color: c.estAbsent ? "#B4322B" : "#1E7A4C" }}>{fmt(c.montantJour)}</b>
