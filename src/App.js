@@ -151,6 +151,24 @@ function getFerieInfo(dateISO, localisation, extraFeries = []) {
   return { isFerie: false };
 }
 
+// ============================================================
+// STYLE RESPONSIVE (mobile / iPhone)
+// ============================================================
+const RESPONSIVE_CSS = `
+@media (max-width: 768px) {
+  .askg-shell { flex-direction: column !important; }
+  .askg-sidebar { width: 100% !important; padding: 12px 0 !important; }
+  .askg-sidebar-header { padding: 0 16px 12px !important; margin-bottom: 8px !important; }
+  .askg-sidebar-nav { display: flex !important; overflow-x: auto !important; -webkit-overflow-scrolling: touch !important; padding: 0 8px !important; }
+  .askg-sidebar-nav > div { white-space: nowrap !important; padding: 8px 14px !important; border-left: none !important; border-bottom: 3px solid transparent !important; }
+  .askg-sidebar-footer { margin: 8px 16px 0 !important; }
+  .askg-main { padding: 14px !important; }
+  .askg-kpi-grid { grid-template-columns: repeat(2, 1fr) !important; gap: 8px !important; }
+  table { font-size: 11px !important; }
+  h1 { font-size: 18px !important; }
+}
+`;
+
 export default function App() {
   const [unlocked, setUnlocked] = useState(false);
   const [storedPassword, setStoredPassword] = useState(null);
@@ -329,8 +347,8 @@ export default function App() {
       else joursP++;
     });
     const mp = getMonthParam(agentId, date);
-    // Si 2 absences non justifiées ou plus → prime assiduité = 0 automatiquement
-    const primeAss = absNJ >= 2 ? 0 : (mp.primeAssiduite || 0);
+    // Si 2 absences ou plus (justifiées OU non justifiées) → prime assiduité = 0 automatiquement
+    const primeAss = joursA >= 2 ? 0 : (mp.primeAssiduite || 0);
     const primePerf = mp.primePerformance || 0;
     const netAgent = totalFixe + primeAss + primePerf;
     // Charges sociales RDC (sur le salaire brut = salaire fixe mensuel)
@@ -344,7 +362,7 @@ export default function App() {
     return { totalFixe, primeAss, primePerf, netAgent, joursP, joursA, absNJ, retardTotal, cnssSal, ipr, cnssPat, inpp, onem, chargesSocietes };
   }
 
-  // Récapitulatif mensuel — agents Tunisie (DT)
+  // Récapitulatif mensuel — agents Tunisie (DT) — pas de prime d'assiduité pour la Tunisie
   function recapMensuelTN(agentId, date) {
     const mk = monthKey(date);
     const pts = pointages.filter(p => p.agentId === agentId && monthKey(p.date) === mk);
@@ -375,25 +393,28 @@ export default function App() {
   if (!loaded) return <div style={{ padding: 40, color: NAVY, fontFamily: "sans-serif" }}>Chargement...</div>;
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh", fontFamily: "'Segoe UI', sans-serif", background: "#F6F5F1" }}>
+    <div className="askg-shell" style={{ display: "flex", minHeight: "100vh", fontFamily: "'Segoe UI', sans-serif", background: "#F6F5F1" }}>
+      <style>{RESPONSIVE_CSS}</style>
       {/* SIDEBAR */}
-      <div style={{ width: 230, background: NAVY, color: "white", padding: "24px 0", flexShrink: 0 }}>
-        <div style={{ padding: "0 24px 20px", borderBottom: "1px solid rgba(255,255,255,.1)", marginBottom: 16 }}>
+      <div className="askg-sidebar" style={{ width: 230, background: NAVY, color: "white", padding: "24px 0", flexShrink: 0 }}>
+        <div className="askg-sidebar-header" style={{ padding: "0 24px 20px", borderBottom: "1px solid rgba(255,255,255,.1)", marginBottom: 16 }}>
           <div style={{ fontSize: 11, letterSpacing: 3, color: GOLD, fontWeight: 600 }}>ASK GROUP</div>
           <div style={{ fontSize: 18, fontWeight: 700, marginTop: 4 }}>Suivi RH</div>
           <div style={{ fontSize: 10, color: "rgba(255,255,255,.5)", marginTop: 2 }}>🟢 Connecté — Données partagées</div>
         </div>
-        {[["pointage","Pointage du jour"],["agents","Gestion des agents"],["params","Paramètres mensuels"],["recap","Récapitulatif"]].map(([k,l]) => (
-          <div key={k} onClick={() => setPage(k)} style={{ padding: "12px 24px", fontSize: 13, cursor: "pointer", borderLeft: page===k ? `3px solid ${GOLD}` : "3px solid transparent", background: page===k ? "rgba(212,175,55,.12)" : "transparent", color: page===k ? GOLD_LIGHT : "rgba(255,255,255,.65)", fontWeight: page===k ? 600 : 400 }}>{l}</div>
-        ))}
-        <div style={{ margin: "20px 24px 0" }}>
+        <div className="askg-sidebar-nav">
+          {[["pointage","Pointage du jour"],["agents","Gestion des agents"],["params","Paramètres mensuels"],["recap","Récapitulatif"]].map(([k,l]) => (
+            <div key={k} onClick={() => setPage(k)} style={{ padding: "12px 24px", fontSize: 13, cursor: "pointer", borderLeft: page===k ? `3px solid ${GOLD}` : "3px solid transparent", background: page===k ? "rgba(212,175,55,.12)" : "transparent", color: page===k ? GOLD_LIGHT : "rgba(255,255,255,.65)", fontWeight: page===k ? 600 : 400 }}>{l}</div>
+          ))}
+        </div>
+        <div className="askg-sidebar-footer" style={{ margin: "20px 24px 0" }}>
           {saveStatus && <div style={{ color: "#8FD9B0", fontSize: 12, marginBottom: 8 }}>{saveStatus}</div>}
           <button onClick={() => setUnlocked(false)} style={{ width: "100%", background: "rgba(255,255,255,.08)", color: "rgba(255,255,255,.8)", border: "none", padding: 10, borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>🔒 Verrouiller</button>
         </div>
       </div>
 
       {/* MAIN */}
-      <div style={{ flex: 1, padding: "28px 36px", overflowX: "auto" }}>
+      <div className="askg-main" style={{ flex: 1, padding: "28px 36px", overflowX: "auto" }}>
         {page === "pointage" && <PointagePage agents={agents} agentsRDC={agentsRDC} agentsTN={agentsTN} selectedDate={selectedDate} setSelectedDate={setSelectedDate} getPointage={getPointage} upsertPointage={upsertPointage} calculDuJour={calculDuJour} presentsToday={presentsToday} absentsToday={absentsToday} total={agents.length} dtToUsd={dtToUsd} extraFeries={extraFeries} />}
         {page === "agents" && <AgentsPage agents={agents} agentsRDC={agentsRDC} agentsTN={agentsTN} addAgent={addAgent} removeAgent={removeAgent} />}
         {page === "params" && <ParamsPage agents={agents} agentsRDC={agentsRDC} agentsTN={agentsTN} selectedDate={selectedDate} setSelectedDate={setSelectedDate} getMonthParam={getMonthParam} setMonthParam={setMonthParam} dtToUsd={dtToUsd} setDtToUsd={setDtToUsd} onChangePassword={handleChangePassword} extraFeries={extraFeries} setExtraFeries={setExtraFeries} />}
@@ -447,7 +468,7 @@ function PointagePage({ agents, agentsRDC, agentsTN, selectedDate, setSelectedDa
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 14, marginBottom: 22 }}>
+      <div className="askg-kpi-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 14, marginBottom: 22 }}>
         <Kpi label="Total agents" value={total} />
         <Kpi label="Présents" value={presentsToday} color="#1E7A4C" />
         <Kpi label="Absents" value={absentsToday} color="#B4322B" />
@@ -647,7 +668,7 @@ function ParamsPage({ agents, agentsRDC, agentsTN, selectedDate, setSelectedDate
 
       {/* Salaires RDC */}
       <Panel title="🇨🇩 Salaires & Primes — Agents RDC (USD) — Début de mois : salaire fixe / Fin de mois : primes" color="#1B3A6B">
-        <div style={{ fontSize: 11, color: "#6B6B63", marginBottom: 12 }}>⚠️ Les charges sociales (CNSS, INPP, ONEM, IPR) sont visibles dans le Récapitulatif — elles ne sont PAS déduites du salaire de l'agent.</div>
+        <div style={{ fontSize: 11, color: "#6B6B63", marginBottom: 12 }}>⚠️ Les charges sociales (CNSS, INPP, ONEM, IPR) sont visibles dans le Récapitulatif — elles ne sont PAS déduites du salaire de l'agent. La prime d'assiduité tombe automatiquement à 0 dès 2 absences dans le mois (justifiées ou non).</div>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
           <thead><tr>{["Agent","Poste","Salaire fixe (USD/mois)","Prime assiduité (USD)","Prime performance (USD)"].map(h => <th key={h} style={thStyle}>{h}</th>)}</tr></thead>
           <tbody>
@@ -726,7 +747,7 @@ function RecapPage({ agents, agentsRDC, agentsTN, selectedDate, setSelectedDate,
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
             <thead>
-              <tr>{["Agent","Jours présents","Absences NJ","Retard cumulé","Fixe accumulé","Prime assiduité","Prime performance","NET versé à l'agent"].map(h => <th key={h} style={thStyle}>{h}</th>)}</tr>
+              <tr>{["Agent","Jours présents","Absences (just. + non just.)","Retard cumulé","Fixe accumulé","Prime assiduité","Prime performance","NET versé à l'agent"].map(h => <th key={h} style={thStyle}>{h}</th>)}</tr>
             </thead>
             <tbody>
               {agentsRDC.map(agent => {
@@ -735,7 +756,7 @@ function RecapPage({ agents, agentsRDC, agentsTN, selectedDate, setSelectedDate,
                   <tr key={agent.id}>
                     <td style={tdStyle}><b>{agent.nom}</b></td>
                     <td style={tdStyle}>{r.joursP}</td>
-                    <td style={tdStyle}><span style={{ background: r.absNJ >= 2 ? "#FBE9E7" : "#E6F4EC", color: r.absNJ >= 2 ? "#B4322B" : "#1E7A4C", padding: "2px 8px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>{r.absNJ}</span></td>
+                    <td style={tdStyle}><span style={{ background: r.joursA >= 2 ? "#FBE9E7" : "#E6F4EC", color: r.joursA >= 2 ? "#B4322B" : "#1E7A4C", padding: "2px 8px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>{r.joursA}</span></td>
                     <td style={tdStyle}>{r.retardTotal} min</td>
                     <td style={tdStyle}>{r.totalFixe.toFixed(2)} USD</td>
                     <td style={tdStyle}>{r.primeAss.toFixed(2)} USD</td>
@@ -747,6 +768,7 @@ function RecapPage({ agents, agentsRDC, agentsTN, selectedDate, setSelectedDate,
             </tbody>
           </table>
         </div>
+        <div style={{ fontSize: 11, color: "#6B6B63", marginTop: 8 }}>La prime d'assiduité tombe automatiquement à 0 dès 2 absences dans le mois, justifiées ou non justifiées.</div>
       </Panel>
 
       {/* Charges sociales RDC — séparées */}
