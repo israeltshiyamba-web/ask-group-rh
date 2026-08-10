@@ -44,8 +44,8 @@ const HEURE_DEBUT = "09:00";
 const HEURE_FIN = "17:00";
 const HEURES_JOUR = 8;
 
-// Taux charges sociales RDC (affichées séparément, pas déduites du salaire)
-const TAUX_RDC = { cnssSal: 0.05, ipr: 0.15, cnssPat: 0.13, inpp: 0.03, onem: 0.02 };
+// Taux charges sociales RDC — désactivées jusqu'à nouvel ordre (voir recapMensuelRDC)
+// Pour réactiver : CNSS salarié 5%, IPR 15%, CNSS patronal 13%, INPP 3%, ONEM 2%
 
 // ============================================================
 // CALENDRIERS DES JOURS FÉRIÉS CHÔMÉS ET PAYÉS
@@ -369,14 +369,9 @@ export default function App() {
     const primeAss = joursA >= 2 ? 0 : (mp.primeAssiduite || 0);
     const primePerf = mp.primePerformance || 0;
     const netAgent = totalFixe + primeAss + primePerf;
-    // Charges sociales RDC (sur le salaire brut = salaire fixe mensuel)
-    const brut = mp.salaireFixe;
-    const cnssSal = brut * TAUX_RDC.cnssSal;
-    const ipr = Math.max(0, (brut - cnssSal) * TAUX_RDC.ipr);
-    const cnssPat = brut * TAUX_RDC.cnssPat;
-    const inpp = brut * TAUX_RDC.inpp;
-    const onem = brut * TAUX_RDC.onem;
-    const chargesSocietes = cnssSal + ipr + cnssPat + inpp + onem;
+    // Charges sociales RDC — DÉSACTIVÉES jusqu'à nouvel ordre (contrats pas encore effectifs)
+    const cnssSal = 0, ipr = 0, cnssPat = 0, inpp = 0, onem = 0;
+    const chargesSocietes = 0;
     return { totalFixe, primeAss, primePerf, netAgent, joursP, joursA, absNJ, retardTotal, cnssSal, ipr, cnssPat, inpp, onem, chargesSocietes };
   }
 
@@ -801,7 +796,7 @@ function RecapPage({ agents, agentsRDC, agentsTN, selectedDate, setSelectedDate,
 
       {/* Charges sociales RDC — séparées */}
       <Panel title="🏛 Charges sociales RDC — À payer par ASK GROUP (séparément du salaire)" color="#B4322B">
-        <div style={{ fontSize: 11, color: "#6B6B63", marginBottom: 10 }}>Ces montants sont à la charge de la société — l'agent ne les voit pas et ne les paie pas.</div>
+        <div style={{ fontSize: 11, color: "#B4322B", marginBottom: 10, fontWeight: 600 }}>⏸️ Désactivées jusqu'à nouvel ordre — les contrats officiels ne sont pas encore effectifs. Toutes les valeurs ci-dessous sont à 0.</div>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
             <thead>
