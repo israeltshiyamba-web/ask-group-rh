@@ -352,18 +352,23 @@ export default function App() {
   // Récapitulatif mensuel — agents RDC (USD)
   function recapMensuelRDC(agentId, date) {
     const mk = monthKey(date);
-    const pts = pointages.filter(p => p.agentId === agentId && monthKey(p.date) === mk);
+    const [year, month] = mk.split("-").map(Number);
+    const lastDay = new Date(year, month, 0).getDate();
     let totalFixe = 0, retardTotal = 0, joursP = 0, joursA = 0, absNJ = 0;
-    pts.forEach(p => {
-      const c = calculDuJour(agentId, p.date);
+    for (let d = 1; d <= lastDay; d++) {
+      const dateISO = `${mk}-${String(d).padStart(2, "0")}`;
+      const c = calculDuJour(agentId, dateISO);
+      // Jour férié : toujours payé et compté, même sans aucune saisie ce jour-là
+      if (c.estFerie) { totalFixe += c.montantJour; continue; }
+      const p = getPointage(agentId, dateISO);
+      if (!p) continue; // pas encore de saisie ce jour-là → ignoré comme avant
       totalFixe += c.montantJour;
       if (p.statut === "absent") { joursA++; if (!p.justifie) absNJ++; }
       else {
         joursP++;
-        // Le retard ne compte que sur les jours réellement travaillés (pas férié, pas absent)
-        if (!c.estFerie) retardTotal += (c.minutesManquantes || 0);
+        retardTotal += (c.minutesManquantes || 0);
       }
-    });
+    }
     const mp = getMonthParam(agentId, date);
     // Si 2 absences ou plus (justifiées OU non justifiées) → prime assiduité = 0 automatiquement
     const primeAss = joursA >= 2 ? 0 : (mp.primeAssiduite || 0);
@@ -378,17 +383,22 @@ export default function App() {
   // Récapitulatif mensuel — agents Tunisie (DT) — pas de prime d'assiduité pour la Tunisie
   function recapMensuelTN(agentId, date) {
     const mk = monthKey(date);
-    const pts = pointages.filter(p => p.agentId === agentId && monthKey(p.date) === mk);
+    const [year, month] = mk.split("-").map(Number);
+    const lastDay = new Date(year, month, 0).getDate();
     let totalFixe = 0, retardTotal = 0, joursP = 0, joursA = 0;
-    pts.forEach(p => {
-      const c = calculDuJour(agentId, p.date);
+    for (let d = 1; d <= lastDay; d++) {
+      const dateISO = `${mk}-${String(d).padStart(2, "0")}`;
+      const c = calculDuJour(agentId, dateISO);
+      if (c.estFerie) { totalFixe += c.montantJour; continue; }
+      const p = getPointage(agentId, dateISO);
+      if (!p) continue;
       totalFixe += c.montantJour;
       if (p.statut === "absent") joursA++;
       else {
         joursP++;
-        if (!c.estFerie) retardTotal += (c.minutesManquantes || 0);
+        retardTotal += (c.minutesManquantes || 0);
       }
-    });
+    }
     const mp = getMonthParam(agentId, date);
     const primeAss = mp.primeAssiduite || 0;
     const primePerf = mp.primePerformance || 0;
@@ -432,7 +442,7 @@ export default function App() {
       <div className="askg-main" style={{ flex: 1, padding: "28px 36px", overflowX: "auto" }}>
         {page === "pointage" && <PointagePage agents={agents} agentsRDC={agentsRDC} agentsTN={agentsTN} selectedDate={selectedDate} setSelectedDate={setSelectedDate} getPointage={getPointage} upsertPointage={upsertPointage} calculDuJour={calculDuJour} presentsToday={presentsToday} absentsToday={absentsToday} total={agents.length} dtToUsd={dtToUsd} extraFeries={extraFeries} />}
         {page === "agents" && <AgentsPage agents={agents} agentsRDC={agentsRDC} agentsTN={agentsTN} addAgent={addAgent} removeAgent={removeAgent} />}
-        {page === "params" && <ParamsPage agents={agents} agentsRDC={agentsRDC} agentsTN={agentsTN} pointages={pointages} selectedDate={selectedDate} setSelectedDate={setSelectedDate} getMonthParam={getMonthParam} setMonthParam={setMonthParam} dtToUsd={dtToUsd} setDtToUsd={setDtToUsd} onChangePassword={handleChangePassword} extraFeries={extraFeries} setExtraFeries={setExtraFeries} />}
+        {page === "params" && <ParamsPage agents={agents} agentsRDC={agentsRDC} agentsTN={agentsTN} pointages={pointages} calculDuJour={calculDuJour} selectedDate={selectedDate} setSelectedDate={setSelectedDate} getMonthParam={getMonthParam} setMonthParam={setMonthParam} dtToUsd={dtToUsd} setDtToUsd={setDtToUsd} onChangePassword={handleChangePassword} extraFeries={extraFeries} setExtraFeries={setExtraFeries} />}
         {page === "recap" && <RecapPage agents={agents} agentsRDC={agentsRDC} agentsTN={agentsTN} selectedDate={selectedDate} setSelectedDate={setSelectedDate} recapMensuelRDC={recapMensuelRDC} recapMensuelTN={recapMensuelTN} dtToUsd={dtToUsd} extraFeries={extraFeries} />}
       </div>
     </div>
@@ -527,19 +537,22 @@ function TableauPointage({ agents, selectedDate, getPointage, upsertPointage, ca
             const p = getPointage(agent.id, selectedDate) || { statut: "present", heureArrivee: "", heureDepart: "", justifie: true, notes: "" };
             const c = calculDuJour(agent.id, selectedDate);
             return (
-              <tr key={agent.id}>
+              <tr key={agent.id} style={c.estFerie ? { background: "#F6FBF8" } : undefined}>
                 <td style={tdStyle}><b>{agent.nom}</b></td>
                 <td style={tdStyle}>{agent.poste}</td>
                 <td style={tdStyle}>
-                  <select value={p.statut} onChange={e => upsertPointage(agent.id, selectedDate, { statut: e.target.value })} style={inputStyle}>
-                    <option value="present">Présent</option>
-                    <option value="absent">Absent</option>
-                  </select>
+                  {c.estFerie ? <span style={{ color: "#999", fontSize: 12 }}>🔒 Verrouillé</span> : (
+                    <select value={p.statut} onChange={e => upsertPointage(agent.id, selectedDate, { statut: e.target.value })} style={inputStyle}>
+                      <option value="present">Présent</option>
+                      <option value="absent">Absent</option>
+                    </select>
+                  )}
                 </td>
-                <td style={tdStyle}><input type="time" value={p.heureArrivee || ""} disabled={p.statut==="absent"} onChange={e => upsertPointage(agent.id, selectedDate, { heureArrivee: e.target.value })} style={inputStyle} /></td>
-                <td style={tdStyle}><input type="time" value={p.heureDepart || ""} disabled={p.statut==="absent"} onChange={e => upsertPointage(agent.id, selectedDate, { heureDepart: e.target.value })} style={inputStyle} /></td>
+                <td style={tdStyle}>{c.estFerie ? <span style={{ color: "#999" }}>—</span> : <input type="time" value={p.heureArrivee || ""} disabled={p.statut==="absent"} onChange={e => upsertPointage(agent.id, selectedDate, { heureArrivee: e.target.value })} style={inputStyle} />}</td>
+                <td style={tdStyle}>{c.estFerie ? <span style={{ color: "#999" }}>—</span> : <input type="time" value={p.heureDepart || ""} disabled={p.statut==="absent"} onChange={e => upsertPointage(agent.id, selectedDate, { heureDepart: e.target.value })} style={inputStyle} />}</td>
                 <td style={tdStyle}>
-                  {p.statut === "absent"
+                  {c.estFerie ? <span style={{ color: "#999" }}>—</span>
+                  : p.statut === "absent"
                     ? <select value={p.justifie ? "oui" : "non"} onChange={e => upsertPointage(agent.id, selectedDate, { justifie: e.target.value === "oui" })} style={inputStyle}><option value="oui">Justifiée</option><option value="non">Non justifiée</option></select>
                     : <span style={{ color: "#999" }}>—</span>}
                 </td>
@@ -560,7 +573,7 @@ function TableauPointage({ agents, selectedDate, getPointage, upsertPointage, ca
                   <b style={{ color: c.estAbsent ? "#B4322B" : "#1E7A4C" }}>{fmt(c.montantJour)}</b>
                   {!c.estAbsent && dtToUsd && devise === "DT" && <div style={{ fontSize: 10, color: "#999" }}>≈ {(c.montantJour * dtToUsd).toLocaleString("fr-FR",{minimumFractionDigits:2,maximumFractionDigits:2})} USD</div>}
                 </td>
-                <td style={tdStyle}><input type="text" placeholder="Note..." value={p.notes || ""} onChange={e => upsertPointage(agent.id, selectedDate, { notes: e.target.value })} style={{ ...inputStyle, background: "white", color: "#1C1C1A", fontWeight: 400, width: 120 }} /></td>
+                <td style={tdStyle}>{c.estFerie ? <span style={{ color: "#999" }}>—</span> : <input type="text" placeholder="Note..." value={p.notes || ""} onChange={e => upsertPointage(agent.id, selectedDate, { notes: e.target.value })} style={{ ...inputStyle, background: "white", color: "#1C1C1A", fontWeight: 400, width: 120 }} />}</td>
               </tr>
             );
           })}
@@ -654,7 +667,7 @@ function AgentsPage({ agents, agentsRDC, agentsTN, addAgent, removeAgent }) {
 // ============================================================
 // PARAMÈTRES MENSUELS
 // ============================================================
-function ParamsPage({ agents, agentsRDC, agentsTN, pointages, selectedDate, setSelectedDate, getMonthParam, setMonthParam, dtToUsd, setDtToUsd, onChangePassword }) {
+function ParamsPage({ agents, agentsRDC, agentsTN, pointages, calculDuJour, selectedDate, setSelectedDate, getMonthParam, setMonthParam, dtToUsd, setDtToUsd, onChangePassword }) {
   const [oldPw, setOldPw] = useState(""); const [newPw, setNewPw] = useState(""); const [newPw2, setNewPw2] = useState(""); const [msg, setMsg] = useState("");
 
   async function submitPw() {
@@ -690,7 +703,7 @@ function ParamsPage({ agents, agentsRDC, agentsTN, pointages, selectedDate, setS
             {agentsRDC.map(agent => {
               const mp = getMonthParam(agent.id, selectedDate);
               const mk = monthKey(selectedDate);
-              const joursAbsenceComplete = pointages.filter(p => p.agentId === agent.id && monthKey(p.date) === mk && p.statut === "absent").length;
+              const joursAbsenceComplete = pointages.filter(p => p.agentId === agent.id && monthKey(p.date) === mk && p.statut === "absent" && !calculDuJour(agent.id, p.date).estFerie).length;
               const primeBloquee = joursAbsenceComplete >= 2;
               return (
                 <tr key={agent.id}>
