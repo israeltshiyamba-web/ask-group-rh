@@ -169,6 +169,21 @@ const RESPONSIVE_CSS = `
 }
 `;
 
+// Formate un total de minutes en "Xj Yh Zmin" (24h = 1 jour)
+function formatRetard(totalMin) {
+  const t = Math.round(totalMin || 0);
+  if (t <= 0) return "0 min";
+  const jours = Math.floor(t / 1440);
+  const resteApresJours = t % 1440;
+  const heures = Math.floor(resteApresJours / 60);
+  const minutes = resteApresJours % 60;
+  const parts = [];
+  if (jours > 0) parts.push(`${jours}j`);
+  if (heures > 0) parts.push(`${heures}h`);
+  if (minutes > 0 || parts.length === 0) parts.push(`${minutes}min`);
+  return parts.join(" ");
+}
+
 export default function App() {
   const [unlocked, setUnlocked] = useState(false);
   const [storedPassword, setStoredPassword] = useState(null);
@@ -295,7 +310,7 @@ export default function App() {
 
     // Jour férié chômé payé : l'agent est payé normalement sans travailler
     if (ferieInfo.isFerie) {
-      return { fixeJournalier, deductionRetard: 0, montantJour: fixeJournalier, retardMinutes: 0, estAbsent: false, estFerie: true, ferieNom: ferieInfo.nom };
+      return { fixeJournalier, deductionRetard: 0, montantJour: fixeJournalier, minutesManquantes: 0, estAbsent: false, estFerie: true, ferieNom: ferieInfo.nom };
     }
 
     // Absent = journée entière déduite, avec ou sans justification
@@ -342,9 +357,12 @@ export default function App() {
     pts.forEach(p => {
       const c = calculDuJour(agentId, p.date);
       totalFixe += c.montantJour;
-      retardTotal += c.retardMinutes;
       if (p.statut === "absent") { joursA++; if (!p.justifie) absNJ++; }
-      else joursP++;
+      else {
+        joursP++;
+        // Le retard ne compte que sur les jours réellement travaillés (pas férié, pas absent)
+        if (!c.estFerie) retardTotal += (c.minutesManquantes || 0);
+      }
     });
     const mp = getMonthParam(agentId, date);
     // Si 2 absences ou plus (justifiées OU non justifiées) → prime assiduité = 0 automatiquement
@@ -370,9 +388,11 @@ export default function App() {
     pts.forEach(p => {
       const c = calculDuJour(agentId, p.date);
       totalFixe += c.montantJour;
-      retardTotal += c.retardMinutes;
       if (p.statut === "absent") joursA++;
-      else joursP++;
+      else {
+        joursP++;
+        if (!c.estFerie) retardTotal += (c.minutesManquantes || 0);
+      }
     });
     const mp = getMonthParam(agentId, date);
     const primeAss = mp.primeAssiduite || 0;
@@ -417,7 +437,7 @@ export default function App() {
       <div className="askg-main" style={{ flex: 1, padding: "28px 36px", overflowX: "auto" }}>
         {page === "pointage" && <PointagePage agents={agents} agentsRDC={agentsRDC} agentsTN={agentsTN} selectedDate={selectedDate} setSelectedDate={setSelectedDate} getPointage={getPointage} upsertPointage={upsertPointage} calculDuJour={calculDuJour} presentsToday={presentsToday} absentsToday={absentsToday} total={agents.length} dtToUsd={dtToUsd} extraFeries={extraFeries} />}
         {page === "agents" && <AgentsPage agents={agents} agentsRDC={agentsRDC} agentsTN={agentsTN} addAgent={addAgent} removeAgent={removeAgent} />}
-        {page === "params" && <ParamsPage agents={agents} agentsRDC={agentsRDC} agentsTN={agentsTN} selectedDate={selectedDate} setSelectedDate={setSelectedDate} getMonthParam={getMonthParam} setMonthParam={setMonthParam} dtToUsd={dtToUsd} setDtToUsd={setDtToUsd} onChangePassword={handleChangePassword} extraFeries={extraFeries} setExtraFeries={setExtraFeries} />}
+        {page === "params" && <ParamsPage agents={agents} agentsRDC={agentsRDC} agentsTN={agentsTN} pointages={pointages} selectedDate={selectedDate} setSelectedDate={setSelectedDate} getMonthParam={getMonthParam} setMonthParam={setMonthParam} dtToUsd={dtToUsd} setDtToUsd={setDtToUsd} onChangePassword={handleChangePassword} extraFeries={extraFeries} setExtraFeries={setExtraFeries} />}
         {page === "recap" && <RecapPage agents={agents} agentsRDC={agentsRDC} agentsTN={agentsTN} selectedDate={selectedDate} setSelectedDate={setSelectedDate} recapMensuelRDC={recapMensuelRDC} recapMensuelTN={recapMensuelTN} dtToUsd={dtToUsd} extraFeries={extraFeries} />}
       </div>
     </div>
@@ -639,7 +659,7 @@ function AgentsPage({ agents, agentsRDC, agentsTN, addAgent, removeAgent }) {
 // ============================================================
 // PARAMÈTRES MENSUELS
 // ============================================================
-function ParamsPage({ agents, agentsRDC, agentsTN, selectedDate, setSelectedDate, getMonthParam, setMonthParam, dtToUsd, setDtToUsd, onChangePassword }) {
+function ParamsPage({ agents, agentsRDC, agentsTN, pointages, selectedDate, setSelectedDate, getMonthParam, setMonthParam, dtToUsd, setDtToUsd, onChangePassword }) {
   const [oldPw, setOldPw] = useState(""); const [newPw, setNewPw] = useState(""); const [newPw2, setNewPw2] = useState(""); const [msg, setMsg] = useState("");
 
   async function submitPw() {
@@ -674,12 +694,20 @@ function ParamsPage({ agents, agentsRDC, agentsTN, selectedDate, setSelectedDate
           <tbody>
             {agentsRDC.map(agent => {
               const mp = getMonthParam(agent.id, selectedDate);
+              const mk = monthKey(selectedDate);
+              const joursAbsenceComplete = pointages.filter(p => p.agentId === agent.id && monthKey(p.date) === mk && p.statut === "absent").length;
+              const primeBloquee = joursAbsenceComplete >= 2;
               return (
                 <tr key={agent.id}>
                   <td style={tdStyle}><b>{agent.nom}</b></td>
                   <td style={tdStyle}>{agent.poste}</td>
                   <td style={tdStyle}><div style={{ display: "flex", alignItems: "center", gap: 6 }}><input type="number" value={mp.salaireFixe} onChange={e => setMonthParam(agent.id, selectedDate, { salaireFixe: parseFloat(e.target.value) || 0 })} style={{ ...inputStyle, width: 90 }} /> USD</div></td>
-                  <td style={tdStyle}><div style={{ display: "flex", alignItems: "center", gap: 6 }}><input type="number" value={mp.primeAssiduite} onChange={e => setMonthParam(agent.id, selectedDate, { primeAssiduite: parseFloat(e.target.value) || 0 })} style={{ ...inputStyle, width: 80 }} /> USD</div></td>
+                  <td style={tdStyle}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <input type="number" value={mp.primeAssiduite} disabled={primeBloquee} onChange={e => setMonthParam(agent.id, selectedDate, { primeAssiduite: parseFloat(e.target.value) || 0 })} style={{ ...inputStyle, width: 80, ...(primeBloquee ? { background: "#F0F0EE", color: "#999", cursor: "not-allowed" } : {}) }} /> USD
+                    </div>
+                    {primeBloquee && <div style={{ fontSize: 10, color: "#B4322B", marginTop: 3 }}>🚫 Non comptabilisée ({joursAbsenceComplete} absences complètes)</div>}
+                  </td>
                   <td style={tdStyle}><div style={{ display: "flex", alignItems: "center", gap: 6 }}><input type="number" value={mp.primePerformance} onChange={e => setMonthParam(agent.id, selectedDate, { primePerformance: parseFloat(e.target.value) || 0 })} style={{ ...inputStyle, width: 80 }} /> USD</div></td>
                 </tr>
               );
@@ -757,7 +785,7 @@ function RecapPage({ agents, agentsRDC, agentsTN, selectedDate, setSelectedDate,
                     <td style={tdStyle}><b>{agent.nom}</b></td>
                     <td style={tdStyle}>{r.joursP}</td>
                     <td style={tdStyle}><span style={{ background: r.joursA >= 2 ? "#FBE9E7" : "#E6F4EC", color: r.joursA >= 2 ? "#B4322B" : "#1E7A4C", padding: "2px 8px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>{r.joursA}</span></td>
-                    <td style={tdStyle}>{r.retardTotal} min</td>
+                    <td style={tdStyle}>{formatRetard(r.retardTotal)}</td>
                     <td style={tdStyle}>{r.totalFixe.toFixed(2)} USD</td>
                     <td style={tdStyle}>{r.primeAss.toFixed(2)} USD</td>
                     <td style={tdStyle}>{r.primePerf.toFixed(2)} USD</td>
@@ -814,7 +842,7 @@ function RecapPage({ agents, agentsRDC, agentsTN, selectedDate, setSelectedDate,
                     <tr key={agent.id}>
                       <td style={tdStyle}><b>{agent.nom}</b></td>
                       <td style={tdStyle}>{r.joursP}</td>
-                      <td style={tdStyle}>{r.retardTotal} min</td>
+                      <td style={tdStyle}>{formatRetard(r.retardTotal)}</td>
                       <td style={tdStyle}>{r.totalFixe.toFixed(2)} DT</td>
                       <td style={tdStyle}>{r.primeAss.toFixed(2)} DT</td>
                       <td style={tdStyle}>{r.primePerf.toFixed(2)} DT</td>
