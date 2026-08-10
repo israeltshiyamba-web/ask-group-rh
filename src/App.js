@@ -125,6 +125,10 @@ const FERIES_TN_FIXES = [
 // localisation: "RDC" ou "TN"
 // extraFeries: dates variables ajoutées manuellement (Aïd, etc.) format "YYYY-MM-DD"
 function getFerieInfo(dateISO, localisation, extraFeries = []) {
+  // Un weekend n'est jamais un jour férié payé — il n'est de toute façon jamais travaillé/payé
+  const jourSemaine = new Date(dateISO + "T00:00:00").getDay();
+  if (jourSemaine === 0 || jourSemaine === 6) return { isFerie: false };
+
   const year = parseInt(dateISO.slice(0, 4));
   const mmdd = dateISO.slice(5); // "MM-DD"
 
@@ -354,12 +358,15 @@ export default function App() {
     const mk = monthKey(date);
     const [year, month] = mk.split("-").map(Number);
     const lastDay = new Date(year, month, 0).getDate();
-    let totalFixe = 0, retardTotal = 0, joursP = 0, joursA = 0, absNJ = 0;
+    let totalFixe = 0, retardTotal = 0, joursP = 0, joursA = 0, absNJ = 0, tempsTravailleTotal = 0;
     for (let d = 1; d <= lastDay; d++) {
       const dateISO = `${mk}-${String(d).padStart(2, "0")}`;
+      const jourSemaine = new Date(year, month - 1, d).getDay();
+      const estWeekend = jourSemaine === 0 || jourSemaine === 6;
       const c = calculDuJour(agentId, dateISO);
-      // Jour férié : toujours payé et compté, même sans aucune saisie ce jour-là
-      if (c.estFerie) { totalFixe += c.montantJour; continue; }
+      // Jour férié : toujours payé et compté, même sans aucune saisie ce jour-là —
+      // sauf s'il tombe un weekend, qui n'est de toute façon jamais un jour travaillé/payé
+      if (c.estFerie) { if (!estWeekend) totalFixe += c.montantJour; continue; }
       const p = getPointage(agentId, dateISO);
       if (!p) continue; // pas encore de saisie ce jour-là → ignoré comme avant
       totalFixe += c.montantJour;
@@ -367,6 +374,7 @@ export default function App() {
       else {
         joursP++;
         retardTotal += (c.minutesManquantes || 0);
+        tempsTravailleTotal += (c.minutesTravaillees || 0);
       }
     }
     const mp = getMonthParam(agentId, date);
@@ -377,7 +385,7 @@ export default function App() {
     // Charges sociales RDC — DÉSACTIVÉES jusqu'à nouvel ordre (contrats pas encore effectifs)
     const cnssSal = 0, ipr = 0, cnssPat = 0, inpp = 0, onem = 0;
     const chargesSocietes = 0;
-    return { totalFixe, primeAss, primePerf, netAgent, joursP, joursA, absNJ, retardTotal, cnssSal, ipr, cnssPat, inpp, onem, chargesSocietes };
+    return { totalFixe, primeAss, primePerf, netAgent, joursP, joursA, absNJ, retardTotal, tempsTravailleTotal, cnssSal, ipr, cnssPat, inpp, onem, chargesSocietes };
   }
 
   // Récapitulatif mensuel — agents Tunisie (DT) — pas de prime d'assiduité pour la Tunisie
@@ -385,11 +393,13 @@ export default function App() {
     const mk = monthKey(date);
     const [year, month] = mk.split("-").map(Number);
     const lastDay = new Date(year, month, 0).getDate();
-    let totalFixe = 0, retardTotal = 0, joursP = 0, joursA = 0;
+    let totalFixe = 0, retardTotal = 0, joursP = 0, joursA = 0, tempsTravailleTotal = 0;
     for (let d = 1; d <= lastDay; d++) {
       const dateISO = `${mk}-${String(d).padStart(2, "0")}`;
+      const jourSemaine = new Date(year, month - 1, d).getDay();
+      const estWeekend = jourSemaine === 0 || jourSemaine === 6;
       const c = calculDuJour(agentId, dateISO);
-      if (c.estFerie) { totalFixe += c.montantJour; continue; }
+      if (c.estFerie) { if (!estWeekend) totalFixe += c.montantJour; continue; }
       const p = getPointage(agentId, dateISO);
       if (!p) continue;
       totalFixe += c.montantJour;
@@ -397,6 +407,7 @@ export default function App() {
       else {
         joursP++;
         retardTotal += (c.minutesManquantes || 0);
+        tempsTravailleTotal += (c.minutesTravaillees || 0);
       }
     }
     const mp = getMonthParam(agentId, date);
@@ -404,7 +415,7 @@ export default function App() {
     const primePerf = mp.primePerformance || 0;
     const netDT = totalFixe + primeAss + primePerf;
     const netUSD = netDT * dtToUsd;
-    return { totalFixe, primeAss, primePerf, netDT, netUSD, joursP, joursA, retardTotal };
+    return { totalFixe, primeAss, primePerf, netDT, netUSD, joursP, joursA, retardTotal, tempsTravailleTotal };
   }
 
   const agentsRDC = agents.filter(a => a.localisation === "RDC" || !a.localisation);
@@ -783,7 +794,7 @@ function RecapPage({ agents, agentsRDC, agentsTN, selectedDate, setSelectedDate,
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
             <thead>
-              <tr>{["Agent","Jours présents","Absences (just. + non just.)","Retard cumulé","Fixe accumulé","Prime assiduité","Prime performance","NET versé à l'agent"].map(h => <th key={h} style={thStyle}>{h}</th>)}</tr>
+              <tr>{["Agent","Jours présents","Absences (just. + non just.)","Temps travaillé","Retard cumulé","Fixe accumulé","Prime assiduité","Prime performance","NET versé à l'agent"].map(h => <th key={h} style={thStyle}>{h}</th>)}</tr>
             </thead>
             <tbody>
               {agentsRDC.map(agent => {
@@ -793,6 +804,7 @@ function RecapPage({ agents, agentsRDC, agentsTN, selectedDate, setSelectedDate,
                     <td style={tdStyle}><b>{agent.nom}</b></td>
                     <td style={tdStyle}>{r.joursP}</td>
                     <td style={tdStyle}><span style={{ background: r.joursA >= 2 ? "#FBE9E7" : "#E6F4EC", color: r.joursA >= 2 ? "#B4322B" : "#1E7A4C", padding: "2px 8px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>{r.joursA}</span></td>
+                    <td style={tdStyle}>{formatRetard(r.tempsTravailleTotal)}</td>
                     <td style={tdStyle}>{formatRetard(r.retardTotal)}</td>
                     <td style={tdStyle}>{r.totalFixe.toFixed(2)} USD</td>
                     <td style={tdStyle}>{r.primeAss.toFixed(2)} USD</td>
@@ -841,7 +853,7 @@ function RecapPage({ agents, agentsRDC, agentsTN, selectedDate, setSelectedDate,
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
-                <tr>{["Agent","Jours présents","Retard cumulé","Fixe accumulé","Prime assiduité","Prime performance","NET en DT","Équivalent USD"].map(h => <th key={h} style={thStyle}>{h}</th>)}</tr>
+                <tr>{["Agent","Jours présents","Temps travaillé","Retard cumulé","Fixe accumulé","Prime assiduité","Prime performance","NET en DT","Équivalent USD"].map(h => <th key={h} style={thStyle}>{h}</th>)}</tr>
               </thead>
               <tbody>
                 {agentsTN.map(agent => {
@@ -850,6 +862,7 @@ function RecapPage({ agents, agentsRDC, agentsTN, selectedDate, setSelectedDate,
                     <tr key={agent.id}>
                       <td style={tdStyle}><b>{agent.nom}</b></td>
                       <td style={tdStyle}>{r.joursP}</td>
+                      <td style={tdStyle}>{formatRetard(r.tempsTravailleTotal)}</td>
                       <td style={tdStyle}>{formatRetard(r.retardTotal)}</td>
                       <td style={tdStyle}>{r.totalFixe.toFixed(2)} DT</td>
                       <td style={tdStyle}>{r.primeAss.toFixed(2)} DT</td>
