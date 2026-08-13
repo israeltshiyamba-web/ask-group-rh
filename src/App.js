@@ -19,6 +19,17 @@ const APP_NAME = "suivi_rh";
 // Taux de change DT -> USD (à mettre à jour manuellement)
 const DT_TO_USD_DEFAULT = 0.32; // 1 DT ≈ 0.32 USD
 
+// Prime d'assiduité — montant fixe (25$, ou équivalent en DT pour la Tunisie),
+// réduit selon le retard cumulé du mois, ou annulé si 2 absences complètes ou plus.
+const PRIME_ASSIDUITE_BASE_USD = 25;
+function calcPrimeAssiduiteMontant(retardTotalMinutes, joursAbsenceComplete, baseAmount) {
+  if (joursAbsenceComplete >= 2) return 0; // absences prioritaires sur le calcul du retard
+  if (retardTotalMinutes >= 240) return 0;              // 4h à 8h de retard cumulé → prime perdue
+  if (retardTotalMinutes >= 120) return baseAmount * 0.5; // 2h à 4h → -50%
+  if (retardTotalMinutes >= 30) return baseAmount * 0.8;  // 30min à 2h → -20%
+  return baseAmount;                                     // moins de 30 min → prime intégrale
+}
+
 function uid() { return Math.random().toString(36).slice(2, 10); }
 function todayISO() { return new Date().toISOString().slice(0, 10); }
 function monthKey(d) { return d.slice(0, 7); }
@@ -358,7 +369,7 @@ export default function App() {
     const mk = monthKey(date);
     const [year, month] = mk.split("-").map(Number);
     const lastDay = new Date(year, month, 0).getDate();
-    let totalFixe = 0, retardTotal = 0, joursP = 0, joursA = 0, absNJ = 0, tempsTravailleTotal = 0;
+    let totalFixe = 0, retardTotal = 0, joursP = 0, joursA = 0, absNJ = 0, tempsTravailleTotal = 0, joursFeries = 0;
     for (let d = 1; d <= lastDay; d++) {
       const dateISO = `${mk}-${String(d).padStart(2, "0")}`;
       const jourSemaine = new Date(year, month - 1, d).getDay();
@@ -366,7 +377,7 @@ export default function App() {
       const c = calculDuJour(agentId, dateISO);
       // Jour férié : toujours payé et compté, même sans aucune saisie ce jour-là —
       // sauf s'il tombe un weekend, qui n'est de toute façon jamais un jour travaillé/payé
-      if (c.estFerie) { if (!estWeekend) totalFixe += c.montantJour; continue; }
+      if (c.estFerie) { if (!estWeekend) { totalFixe += c.montantJour; joursFeries++; } continue; }
       const p = getPointage(agentId, dateISO);
       if (!p) continue; // pas encore de saisie ce jour-là → ignoré comme avant
       totalFixe += c.montantJour;
@@ -378,14 +389,19 @@ export default function App() {
       }
     }
     const mp = getMonthParam(agentId, date);
-    // Si 2 absences ou plus (justifiées OU non justifiées) → prime assiduité = 0 automatiquement
-    const primeAss = joursA >= 2 ? 0 : (mp.primeAssiduite || 0);
+    // Prime d'assiduité : 25$ fixe, réduite selon le retard cumulé, ou annulée si 2 absences ou plus
+    const primeAss = calcPrimeAssiduiteMontant(retardTotal, joursA, PRIME_ASSIDUITE_BASE_USD);
     const primePerf = mp.primePerformance || 0;
     const netAgent = totalFixe + primeAss + primePerf;
     // Charges sociales RDC — DÉSACTIVÉES jusqu'à nouvel ordre (contrats pas encore effectifs)
     const cnssSal = 0, ipr = 0, cnssPat = 0, inpp = 0, onem = 0;
     const chargesSocietes = 0;
-    return { totalFixe, primeAss, primePerf, netAgent, joursP, joursA, absNJ, retardTotal, tempsTravailleTotal, cnssSal, ipr, cnssPat, inpp, onem, chargesSocietes };
+    // % du temps censé être travaillé dans le mois (jours fériés comptés comme "réalisés", payés)
+    const jOuvrablesMois = joursOuvrables(year, month);
+    const tempsAttendu = jOuvrablesMois * 480;
+    const numerMinutes = tempsTravailleTotal + joursFeries * 480;
+    const pourcentageTempsTravaille = tempsAttendu > 0 ? (numerMinutes / tempsAttendu) * 100 : 0;
+    return { totalFixe, primeAss, primePerf, netAgent, joursP, joursA, absNJ, retardTotal, tempsTravailleTotal, tempsAttendu, pourcentageTempsTravaille, cnssSal, ipr, cnssPat, inpp, onem, chargesSocietes };
   }
 
   // Récapitulatif mensuel — agents Tunisie (DT) — pas de prime d'assiduité pour la Tunisie
@@ -393,13 +409,13 @@ export default function App() {
     const mk = monthKey(date);
     const [year, month] = mk.split("-").map(Number);
     const lastDay = new Date(year, month, 0).getDate();
-    let totalFixe = 0, retardTotal = 0, joursP = 0, joursA = 0, tempsTravailleTotal = 0;
+    let totalFixe = 0, retardTotal = 0, joursP = 0, joursA = 0, tempsTravailleTotal = 0, joursFeries = 0;
     for (let d = 1; d <= lastDay; d++) {
       const dateISO = `${mk}-${String(d).padStart(2, "0")}`;
       const jourSemaine = new Date(year, month - 1, d).getDay();
       const estWeekend = jourSemaine === 0 || jourSemaine === 6;
       const c = calculDuJour(agentId, dateISO);
-      if (c.estFerie) { if (!estWeekend) totalFixe += c.montantJour; continue; }
+      if (c.estFerie) { if (!estWeekend) { totalFixe += c.montantJour; joursFeries++; } continue; }
       const p = getPointage(agentId, dateISO);
       if (!p) continue;
       totalFixe += c.montantJour;
@@ -411,11 +427,18 @@ export default function App() {
       }
     }
     const mp = getMonthParam(agentId, date);
-    const primeAss = mp.primeAssiduite || 0;
+    // Prime d'assiduité : 25$ fixe converti en DT, réduite selon le retard cumulé,
+    // ou annulée si 2 absences ou plus (même règle que la RDC)
+    const baseAssiduiteDT = dtToUsd > 0 ? PRIME_ASSIDUITE_BASE_USD / dtToUsd : 0;
+    const primeAss = calcPrimeAssiduiteMontant(retardTotal, joursA, baseAssiduiteDT);
     const primePerf = mp.primePerformance || 0;
     const netDT = totalFixe + primeAss + primePerf;
     const netUSD = netDT * dtToUsd;
-    return { totalFixe, primeAss, primePerf, netDT, netUSD, joursP, joursA, retardTotal, tempsTravailleTotal };
+    const jOuvrablesMois = joursOuvrables(year, month);
+    const tempsAttendu = jOuvrablesMois * 480;
+    const numerMinutes = tempsTravailleTotal + joursFeries * 480;
+    const pourcentageTempsTravaille = tempsAttendu > 0 ? (numerMinutes / tempsAttendu) * 100 : 0;
+    return { totalFixe, primeAss, primePerf, netDT, netUSD, joursP, joursA, retardTotal, tempsTravailleTotal, tempsAttendu, pourcentageTempsTravaille };
   }
 
   const agentsRDC = agents.filter(a => a.localisation === "RDC" || !a.localisation);
@@ -453,7 +476,7 @@ export default function App() {
       <div className="askg-main" style={{ flex: 1, padding: "28px 36px", overflowX: "auto" }}>
         {page === "pointage" && <PointagePage agents={agents} agentsRDC={agentsRDC} agentsTN={agentsTN} selectedDate={selectedDate} setSelectedDate={setSelectedDate} getPointage={getPointage} upsertPointage={upsertPointage} calculDuJour={calculDuJour} presentsToday={presentsToday} absentsToday={absentsToday} total={agents.length} dtToUsd={dtToUsd} extraFeries={extraFeries} />}
         {page === "agents" && <AgentsPage agents={agents} agentsRDC={agentsRDC} agentsTN={agentsTN} addAgent={addAgent} removeAgent={removeAgent} />}
-        {page === "params" && <ParamsPage agents={agents} agentsRDC={agentsRDC} agentsTN={agentsTN} pointages={pointages} calculDuJour={calculDuJour} selectedDate={selectedDate} setSelectedDate={setSelectedDate} getMonthParam={getMonthParam} setMonthParam={setMonthParam} dtToUsd={dtToUsd} setDtToUsd={setDtToUsd} onChangePassword={handleChangePassword} extraFeries={extraFeries} setExtraFeries={setExtraFeries} />}
+        {page === "params" && <ParamsPage agents={agents} agentsRDC={agentsRDC} agentsTN={agentsTN} pointages={pointages} calculDuJour={calculDuJour} recapMensuelRDC={recapMensuelRDC} recapMensuelTN={recapMensuelTN} selectedDate={selectedDate} setSelectedDate={setSelectedDate} getMonthParam={getMonthParam} setMonthParam={setMonthParam} dtToUsd={dtToUsd} setDtToUsd={setDtToUsd} onChangePassword={handleChangePassword} extraFeries={extraFeries} setExtraFeries={setExtraFeries} />}
         {page === "recap" && <RecapPage agents={agents} agentsRDC={agentsRDC} agentsTN={agentsTN} selectedDate={selectedDate} setSelectedDate={setSelectedDate} recapMensuelRDC={recapMensuelRDC} recapMensuelTN={recapMensuelTN} dtToUsd={dtToUsd} extraFeries={extraFeries} />}
       </div>
     </div>
@@ -678,7 +701,7 @@ function AgentsPage({ agents, agentsRDC, agentsTN, addAgent, removeAgent }) {
 // ============================================================
 // PARAMÈTRES MENSUELS
 // ============================================================
-function ParamsPage({ agents, agentsRDC, agentsTN, pointages, calculDuJour, selectedDate, setSelectedDate, getMonthParam, setMonthParam, dtToUsd, setDtToUsd, onChangePassword }) {
+function ParamsPage({ agents, agentsRDC, agentsTN, pointages, calculDuJour, recapMensuelRDC, recapMensuelTN, selectedDate, setSelectedDate, getMonthParam, setMonthParam, dtToUsd, setDtToUsd, onChangePassword }) {
   const [oldPw, setOldPw] = useState(""); const [newPw, setNewPw] = useState(""); const [newPw2, setNewPw2] = useState(""); const [msg, setMsg] = useState("");
 
   async function submitPw() {
@@ -722,10 +745,9 @@ function ParamsPage({ agents, agentsRDC, agentsTN, pointages, calculDuJour, sele
                   <td style={tdStyle}>{agent.poste}</td>
                   <td style={tdStyle}><div style={{ display: "flex", alignItems: "center", gap: 6 }}><input type="number" value={mp.salaireFixe} onChange={e => setMonthParam(agent.id, selectedDate, { salaireFixe: parseFloat(e.target.value) || 0 })} style={{ ...inputStyle, width: 90 }} /> USD</div></td>
                   <td style={tdStyle}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                      <input type="number" value={mp.primeAssiduite} disabled={primeBloquee} onChange={e => setMonthParam(agent.id, selectedDate, { primeAssiduite: parseFloat(e.target.value) || 0 })} style={{ ...inputStyle, width: 80, ...(primeBloquee ? { background: "#F0F0EE", color: "#999", cursor: "not-allowed" } : {}) }} /> USD
-                    </div>
-                    {primeBloquee && <div style={{ fontSize: 10, color: "#B4322B", marginTop: 3 }}>🚫 Non comptabilisée ({joursAbsenceComplete} absences complètes)</div>}
+                    <b style={{ color: primeBloquee ? "#B4322B" : "#1E7A4C" }}>{recapMensuelRDC(agent.id, selectedDate).primeAss.toFixed(2)} USD</b>
+                    <div style={{ fontSize: 10, color: "#999", marginTop: 3 }}>Automatique (25$ − retard/absences)</div>
+                    {primeBloquee && <div style={{ fontSize: 10, color: "#B4322B", marginTop: 2 }}>🚫 Non comptabilisée ({joursAbsenceComplete} absences complètes)</div>}
                   </td>
                   <td style={tdStyle}><div style={{ display: "flex", alignItems: "center", gap: 6 }}><input type="number" value={mp.primePerformance} onChange={e => setMonthParam(agent.id, selectedDate, { primePerformance: parseFloat(e.target.value) || 0 })} style={{ ...inputStyle, width: 80 }} /> USD</div></td>
                 </tr>
@@ -747,7 +769,7 @@ function ParamsPage({ agents, agentsRDC, agentsTN, pointages, calculDuJour, sele
                   <td style={tdStyle}><b>{agent.nom}</b></td>
                   <td style={tdStyle}>{agent.poste}</td>
                   <td style={tdStyle}><div style={{ display: "flex", alignItems: "center", gap: 6 }}><input type="number" value={mp.salaireFixe} onChange={e => setMonthParam(agent.id, selectedDate, { salaireFixe: parseFloat(e.target.value) || 0 })} style={{ ...inputStyle, width: 90 }} /> DT</div></td>
-                  <td style={tdStyle}><div style={{ display: "flex", alignItems: "center", gap: 6 }}><input type="number" value={mp.primeAssiduite} onChange={e => setMonthParam(agent.id, selectedDate, { primeAssiduite: parseFloat(e.target.value) || 0 })} style={{ ...inputStyle, width: 80 }} /> DT</div></td>
+                  <td style={tdStyle}><b style={{ color: "#1E7A4C" }}>{recapMensuelTN(agent.id, selectedDate).primeAss.toFixed(2)} DT</b><div style={{ fontSize: 10, color: "#999", marginTop: 3 }}>Automatique (25$ conv. − retard/absences)</div></td>
                   <td style={tdStyle}><div style={{ display: "flex", alignItems: "center", gap: 6 }}><input type="number" value={mp.primePerformance} onChange={e => setMonthParam(agent.id, selectedDate, { primePerformance: parseFloat(e.target.value) || 0 })} style={{ ...inputStyle, width: 80 }} /> DT</div></td>
                 </tr>
               );
@@ -794,7 +816,7 @@ function RecapPage({ agents, agentsRDC, agentsTN, selectedDate, setSelectedDate,
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
             <thead>
-              <tr>{["Agent","Jours présents","Absences (just. + non just.)","Temps travaillé","Retard cumulé","Fixe accumulé","Prime assiduité","Prime performance","NET versé à l'agent"].map(h => <th key={h} style={thStyle}>{h}</th>)}</tr>
+              <tr>{["Agent","Jours présents","Absences (just. + non just.)","Temps attendu","Temps travaillé","% temps travaillé","Retard cumulé","Fixe accumulé","Prime assiduité","Prime performance","NET versé à l'agent"].map(h => <th key={h} style={thStyle}>{h}</th>)}</tr>
             </thead>
             <tbody>
               {agentsRDC.map(agent => {
@@ -804,7 +826,9 @@ function RecapPage({ agents, agentsRDC, agentsTN, selectedDate, setSelectedDate,
                     <td style={tdStyle}><b>{agent.nom}</b></td>
                     <td style={tdStyle}>{r.joursP}</td>
                     <td style={tdStyle}><span style={{ background: r.joursA >= 2 ? "#FBE9E7" : "#E6F4EC", color: r.joursA >= 2 ? "#B4322B" : "#1E7A4C", padding: "2px 8px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>{r.joursA}</span></td>
+                    <td style={tdStyle}>{formatRetard(r.tempsAttendu)}</td>
                     <td style={tdStyle}>{formatRetard(r.tempsTravailleTotal)}</td>
+                    <td style={tdStyle}><b style={{ color: r.pourcentageTempsTravaille >= 90 ? "#1E7A4C" : "#B4322B" }}>{r.pourcentageTempsTravaille.toFixed(1)}%</b></td>
                     <td style={tdStyle}>{formatRetard(r.retardTotal)}</td>
                     <td style={tdStyle}>{r.totalFixe.toFixed(2)} USD</td>
                     <td style={tdStyle}>{r.primeAss.toFixed(2)} USD</td>
@@ -853,7 +877,7 @@ function RecapPage({ agents, agentsRDC, agentsTN, selectedDate, setSelectedDate,
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
-                <tr>{["Agent","Jours présents","Temps travaillé","Retard cumulé","Fixe accumulé","Prime assiduité","Prime performance","NET en DT","Équivalent USD"].map(h => <th key={h} style={thStyle}>{h}</th>)}</tr>
+                <tr>{["Agent","Jours présents","Temps attendu","Temps travaillé","% temps travaillé","Retard cumulé","Fixe accumulé","Prime assiduité","Prime performance","NET en DT","Équivalent USD"].map(h => <th key={h} style={thStyle}>{h}</th>)}</tr>
               </thead>
               <tbody>
                 {agentsTN.map(agent => {
@@ -862,7 +886,9 @@ function RecapPage({ agents, agentsRDC, agentsTN, selectedDate, setSelectedDate,
                     <tr key={agent.id}>
                       <td style={tdStyle}><b>{agent.nom}</b></td>
                       <td style={tdStyle}>{r.joursP}</td>
+                      <td style={tdStyle}>{formatRetard(r.tempsAttendu)}</td>
                       <td style={tdStyle}>{formatRetard(r.tempsTravailleTotal)}</td>
+                      <td style={tdStyle}><b style={{ color: r.pourcentageTempsTravaille >= 90 ? "#1E7A4C" : "#B4322B" }}>{r.pourcentageTempsTravaille.toFixed(1)}%</b></td>
                       <td style={tdStyle}>{formatRetard(r.retardTotal)}</td>
                       <td style={tdStyle}>{r.totalFixe.toFixed(2)} DT</td>
                       <td style={tdStyle}>{r.primeAss.toFixed(2)} DT</td>
